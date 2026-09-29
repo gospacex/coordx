@@ -1,0 +1,136 @@
+# coordx - Service Coordination Docker Compose
+# 提取自 legoB，简化为单机开发用
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # ===== MySQL（Apollo QuickStart 依赖）=====
+  mysql:
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/mysql:8.4
+    cpus: "0.5"
+    container_name: hubx-coord-mysql
+    ports:
+      - "3306:3306"
+    command:
+      - --sql-mode=ONLY_FULL_GROUP_BY,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: 512m
+    restart: unless-stopped
+    logging: *default-logging
+
+  # ===== Nacos =====
+  nacos:
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/nacos/nacos-server:v2.4.2
+    cpus: "0.5"
+    container_name: hubx-nacos
+    ports:
+      - "8848:8848"
+      - "9848:9848"
+      - "9849:9849"
+    environment:
+      MODE: standalone
+      SPRING_DATASOURCE_PLATFORM: ""
+      JVM_XMS: 512m
+      JVM_XMX: 512m
+      JVM_XMN: 256m
+      NACOS_APPLICATION_PORT: 8848
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8848/nacos/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    mem_limit: 1g
+    restart: unless-stopped
+    logging: *default-logging
+
+  # ===== Consul =====
+  consul:
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/hashicorp/consul:1.22.4
+    cpus: "0.5"
+    container_name: hubx-consul
+    ports:
+      - "8500:8500"
+    environment:
+      CONSUL_BIND_INTERFACE: eth0
+    command: agent -server -ui -node=server-1 -bootstrap-expect=1 -client=0.0.0.0
+    volumes:
+      - ./data/consul/data:/consul/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8500/v1/status/leader"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    mem_limit: 256m
+    restart: unless-stopped
+    logging: *default-logging
+
+  # ===== etcd =====
+  etcd:
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/gcr.io/etcd-development/etcd:v3.5.0
+    cpus: "0.5"
+    container_name: hubx-etcd
+    command:
+      - /usr/local/bin/etcd
+      - --name=default
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://etcd:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://etcd:2380
+      - --initial-cluster=default=http://etcd:2380
+      - --initial-cluster-state=new
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    volumes:
+      - ./data/etcd:/etcd-data
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/etcdctl", "endpoint", "health", "--endpoints=http://127.0.0.1:2379"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    mem_limit: 512m
+    restart: unless-stopped
+    logging: *default-logging
+
+  # ===== Apollo =====
+  apollo:
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/nobodyiam/apollo-quick-start:2.4.0
+    cpus: "0.5"
+    container_name: hubx-apollo
+    ports:
+      - "8070:8070"
+      - "8085:8080"
+    environment:
+      APOLLO_CONFIG_DB_URL: jdbc:mysql://mysql:3306/ApolloConfigDB?characterEncoding=utf8&serverTimezone=Asia/Shanghai
+      APOLLO_CONFIG_DB_USERNAME: root
+      APOLLO_CONFIG_DB_PASSWORD: rootpass
+      APOLLO_PORTAL_DB_URL: jdbc:mysql://mysql:3306/ApolloPortalDB?characterEncoding=utf8&serverTimezone=Asia/Shanghai
+      APOLLO_PORTAL_DB_USERNAME: root
+      APOLLO_PORTAL_DB_PASSWORD: rootpass
+      JAVA_OPTS: "-Xms256m -Xmx512m -Dspring.jpa.hibernate.ddl-auto=update -Dspring.sql.init.mode=always"
+    command: sh -c "sed -i 's/max_counter=24/max_counter=60/' /apollo-quick-start/demo.sh && /apollo-quick-start/demo.sh start"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    mem_limit: 512m
+    restart: unless-stopped
+    logging: *default-logging
+
+networks:
+  default:
+    name: hubx-coordx-net
+    driver: bridge

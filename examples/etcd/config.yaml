@@ -1,0 +1,11 @@
+coordx:
+  standalone:
+    - driver: etcd
+      name: default
+      addr: "localhost:2379"
+  cluster:
+    - driver: etcd
+      name: cluster
+      addr: "localhost:2379"
+      cluster: "etcd-cluster-1"
+      secret: ""
