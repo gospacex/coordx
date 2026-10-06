@@ -28,6 +28,18 @@ type registerImpl struct {
 	tracer *traceflag.Tracer
 }
 
+// startIfParent 只在 ctx 内已有有效父 span 时才开埋点 span；无父（服务启停、
+// 后台 watch 等框架调度路径，调用方拿的是 context.Background()）返回 noop
+// span。这些调用没有上游请求，开了 span 也只会成为无父孤儿根 trace，把
+// Jaeger 列表淹成噪声（与 Discovery 的门控同一纪律）。noop 下下方
+// SetAttributes / RecordError 语义不变。
+func startIfParent(ctx context.Context, tracer *traceflag.Tracer, name string) (context.Context, trace.Span) {
+	if trace.SpanContextFromContext(ctx).IsValid() {
+		return tracer.Start(ctx, name)
+	}
+	return ctx, trace.SpanFromContext(ctx)
+}
+
 type discoverImpl struct {
 	client naming_client.INamingClient
 	cfg    *coordx.Config
@@ -82,7 +94,7 @@ func NewRegister(cfg *coordx.Config) (*registerImpl, error) {
 }
 
 func (r *registerImpl) Register(ctx context.Context, service string, inst *coordx.ServiceInstance) error {
-	ctx, span := r.tracer.Start(ctx, "coord.register")
+	ctx, span := startIfParent(ctx, r.tracer, "coord.register")
 	defer span.End()
 	span.SetAttributes(
 		attribute.String("coord.driver", "nacos"),
@@ -96,7 +108,7 @@ func (r *registerImpl) Register(ctx context.Context, service string, inst *coord
 	return err
 }
 func (r *registerImpl) Deregister(ctx context.Context, service string, inst *coordx.ServiceInstance) error {
-	ctx, span := r.tracer.Start(ctx, "coord.deregister")
+	ctx, span := startIfParent(ctx, r.tracer, "coord.deregister")
 	defer span.End()
 	span.SetAttributes(
 		attribute.String("coord.driver", "nacos"),
@@ -169,7 +181,7 @@ func (d *discoverImpl) Discovery(ctx context.Context, service string) ([]*coordx
 	return result, nil
 }
 func (d *discoverImpl) Watch(ctx context.Context, service string, callback func([]*coordx.ServiceInstance)) error {
-	ctx, span := d.tracer.Start(ctx, "coord.watch")
+	ctx, span := startIfParent(ctx, d.tracer, "coord.watch")
 	defer span.End()
 	span.SetAttributes(
 		attribute.String("coord.driver", "nacos"),

@@ -23,6 +23,17 @@ type registerImpl struct {
 	tracer *traceflag.Tracer
 }
 
+// startIfParent 只在 ctx 内已有有效父 span 时才开埋点 span；无父（服务启停、
+// 后台 watch 等框架调度路径，调用方拿的是 context.Background()）返回 noop
+// span。这些调用没有上游请求，开了 span 也只会成为无父孤儿根 trace（与
+// Discovery 的门控同一纪律）。noop 下下方 SetAttributes / RecordError 语义不变。
+func startIfParent(ctx context.Context, tracer *traceflag.Tracer, name string) (context.Context, trace.Span) {
+	if trace.SpanContextFromContext(ctx).IsValid() {
+		return tracer.Start(ctx, name)
+	}
+	return ctx, trace.SpanFromContext(ctx)
+}
+
 type discoverImpl struct {
 	client *clientv3.Client
 	cfg    *coordx.Config
@@ -52,14 +63,18 @@ func NewRegister(cfg *coordx.Config) (*registerImpl, error) {
 	tracer := traceflag.NewTracer(cfg != nil && cfg.EnableTrace, "github.com/gospacex/coordx/etcd", "coordx")
 	r := &registerImpl{client: c, cfg: cfg, logger: logx.GetGlobal(), tracer: tracer}
 	r.logger.InfoContext(ctx, "coordx/etcd register initialized", logx.String("addr", cfg.Addr))
-	_, span := tracer.Start(ctx, "coordx.etcd.register.init")
-	defer span.End()
-	span.SetAttributes(attribute.String("coordx.driver", "etcd"))
+	// init 埋点只在有父 span 时才有意义（构造发生在启动期，ctx 必无父），此处
+	// 保持与全局纪律一致：无父不产孤儿。
+	if trace.SpanContextFromContext(ctx).IsValid() {
+		_, span := tracer.Start(ctx, "coordx.etcd.register.init")
+		defer span.End()
+		span.SetAttributes(attribute.String("coordx.driver", "etcd"))
+	}
 	return r, nil
 }
 
 func (r *registerImpl) Register(ctx context.Context, service string, inst *coordx.ServiceInstance) error {
-	ctx, span := r.tracer.Start(ctx, "coord.register")
+	ctx, span := startIfParent(ctx, r.tracer, "coord.register")
 	defer span.End()
 	span.SetAttributes(
 		attribute.String("coord.driver", "etcd"),
@@ -89,7 +104,7 @@ func (r *registerImpl) Register(ctx context.Context, service string, inst *coord
 	return nil
 }
 func (r *registerImpl) Deregister(ctx context.Context, service string, inst *coordx.ServiceInstance) error {
-	ctx, span := r.tracer.Start(ctx, "coord.deregister")
+	ctx, span := startIfParent(ctx, r.tracer, "coord.deregister")
 	defer span.End()
 	span.SetAttributes(
 		attribute.String("coord.driver", "etcd"),
@@ -128,9 +143,12 @@ func NewDiscover(cfg *coordx.Config) (*discoverImpl, error) {
 	tracer := traceflag.NewTracer(cfg != nil && cfg.EnableTrace, "github.com/gospacex/coordx/etcd", "coordx")
 	d := &discoverImpl{client: c, cfg: cfg, logger: logx.GetGlobal(), tracer: tracer}
 	d.logger.InfoContext(ctx, "coordx/etcd discover initialized", logx.String("addr", cfg.Addr))
-	_, span := tracer.Start(ctx, "coordx.etcd.discover.init")
-	defer span.End()
-	span.SetAttributes(attribute.String("coordx.driver", "etcd"))
+	// init 埋点只在有父 span 时才有意义（构造发生在启动期，ctx 必无父）。
+	if trace.SpanContextFromContext(ctx).IsValid() {
+		_, span := tracer.Start(ctx, "coordx.etcd.discover.init")
+		defer span.End()
+		span.SetAttributes(attribute.String("coordx.driver", "etcd"))
+	}
 	return d, nil
 }
 
@@ -163,7 +181,7 @@ func (d *discoverImpl) Discovery(ctx context.Context, service string) ([]*coordx
 	return result, nil
 }
 func (d *discoverImpl) Watch(ctx context.Context, service string, callback func([]*coordx.ServiceInstance)) error {
-	ctx, span := d.tracer.Start(ctx, "coord.watch")
+	ctx, span := startIfParent(ctx, d.tracer, "coord.watch")
 	defer span.End()
 	span.SetAttributes(
 		attribute.String("coord.driver", "etcd"),

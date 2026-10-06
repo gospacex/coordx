@@ -29,6 +29,17 @@ type registerImpl struct {
 	beats map[string]chan struct{} // instanceID -> stop channel
 }
 
+// startIfParent 只在 ctx 内已有有效父 span 时才开埋点 span；无父（服务启停
+// 等框架调度路径，调用方拿的是 context.Background()）返回 noop span。这些
+// 调用没有上游请求，开了 span 也只会成为无父孤儿根 trace（与 Discovery 的
+// 门控同一纪律）。noop 下下方 SetAttributes / RecordError 语义不变。
+func startIfParent(ctx context.Context, tracer *traceflag.Tracer, name string) (context.Context, trace.Span) {
+	if trace.SpanContextFromContext(ctx).IsValid() {
+		return tracer.Start(ctx, name)
+	}
+	return ctx, trace.SpanFromContext(ctx)
+}
+
 type discoverImpl struct {
 	client *api.Client
 	cfg    *coordx.Config
@@ -58,7 +69,7 @@ func NewRegister(cfg *coordx.Config) (*registerImpl, error) {
 }
 
 func (r *registerImpl) Register(ctx context.Context, service string, inst *coordx.ServiceInstance) error {
-	ctx, span := r.tracer.Start(ctx, "coord.register")
+	ctx, span := startIfParent(ctx, r.tracer, "coord.register")
 	defer span.End()
 	span.SetAttributes(
 		attribute.String("coord.driver", "consul"),
@@ -125,7 +136,7 @@ func (r *registerImpl) stopBeat(id string) {
 	}
 }
 func (r *registerImpl) Deregister(ctx context.Context, service string, inst *coordx.ServiceInstance) error {
-	ctx, span := r.tracer.Start(ctx, "coord.deregister")
+	ctx, span := startIfParent(ctx, r.tracer, "coord.deregister")
 	defer span.End()
 	span.SetAttributes(
 		attribute.String("coord.driver", "consul"),
