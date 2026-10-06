@@ -13,6 +13,7 @@ import (
 	"github.com/gospacex/traceflag"
 	"go.etcd.io/etcd/client/v3"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type registerImpl struct {
@@ -134,8 +135,15 @@ func NewDiscover(cfg *coordx.Config) (*discoverImpl, error) {
 }
 
 func (d *discoverImpl) Discovery(ctx context.Context, service string) ([]*coordx.ServiceInstance, error) {
-	ctx, span := d.tracer.Start(ctx, "coord.discover")
-	defer span.End()
+	// 后台轮询（如 kitex 周期 resolve）传入的 ctx 不带父 span：若照样 Start，
+	// 每次轮询都另起一根孤儿单 span trace，Jaeger 列表被噪声淹没，真实请求
+	// 的 trace 反而翻不到。故只在请求内（ctx 已有有效父 span）才埋点；
+	// 无父时用 noop span 占位，下方 SetAttributes / RecordError 语义不变。
+	span := trace.SpanFromContext(ctx)
+	if trace.SpanContextFromContext(ctx).IsValid() {
+		ctx, span = d.tracer.Start(ctx, "coord.discover")
+		defer span.End()
+	}
 	span.SetAttributes(
 		attribute.String("coord.driver", "etcd"),
 		attribute.String("coord.service", service),
