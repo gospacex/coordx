@@ -4,6 +4,7 @@ package coordx
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	_ "github.com/gospacex/logx/zap"
@@ -65,6 +66,16 @@ func (c *Config) FillDefaults() {
 
 // ===== Factory =====
 
+// factoriesMu 保护下面三个 creator map。
+//
+// 背景：REVIEW-REPORT.md 第二优先级第 6 条点名 coordx 需要给 factory map 加
+// 锁，但第八节已修复清单只覆盖了 mqx/sqlx/kvx/searchx，coordx 被漏掉。
+// 未加锁时并发注册 + 并发创建会触发 Go 运行时的
+// "fatal error: concurrent map read and map write" —— 这是无法 recover 的
+// 崩溃级故障，比普通数据竞态严重得多（已由 interface_test.go 的
+// TestFactoryConcurrentAccess 在 -race 下复现）。
+var factoriesMu sync.RWMutex
+
 var (
 	registerCreators = map[string]func(*Config) (Register, error){}
 	discoverCreators = map[string]func(*Config) (Discover, error){}
@@ -73,13 +84,19 @@ var (
 
 // RegisterCreator 注册注册中心创建函数
 func RegisterCreator(name string, creator func(*Config) (Register, error)) {
+	factoriesMu.Lock()
+	defer factoriesMu.Unlock()
 	registerCreators[name] = creator
 }
 
 // NewRegister 创建注册中心
 func NewRegister(cfg *Config) (Register, error) {
 	cfg.FillDefaults()
+	// 只锁 map 查找；creator 本身放到锁外调用 ——
+	// 若 creator 内部又去注册别的驱动（插件化场景），持锁调用会自死锁。
+	factoriesMu.RLock()
 	creator, ok := registerCreators[cfg.Driver]
+	factoriesMu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("coordx: register driver %q not registered", cfg.Driver)
 	}
@@ -88,13 +105,17 @@ func NewRegister(cfg *Config) (Register, error) {
 
 // RegisterDiscoverCreator 注册发现器创建函数
 func RegisterDiscoverCreator(name string, creator func(*Config) (Discover, error)) {
+	factoriesMu.Lock()
+	defer factoriesMu.Unlock()
 	discoverCreators[name] = creator
 }
 
 // NewDiscover 创建设发现器
 func NewDiscover(cfg *Config) (Discover, error) {
 	cfg.FillDefaults()
+	factoriesMu.RLock()
 	creator, ok := discoverCreators[cfg.Driver]
+	factoriesMu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("coordx: discover driver %q not registered", cfg.Driver)
 	}
@@ -103,13 +124,17 @@ func NewDiscover(cfg *Config) (Discover, error) {
 
 // RegisterLeaseCreator 注册 Lease 创建函数
 func RegisterLeaseCreator(name string, creator func(*Config) (Lease, error)) {
+	factoriesMu.Lock()
+	defer factoriesMu.Unlock()
 	leaseCreators[name] = creator
 }
 
 // NewLease 创建 Lease
 func NewLease(cfg *Config) (Lease, error) {
 	cfg.FillDefaults()
+	factoriesMu.RLock()
 	creator, ok := leaseCreators[cfg.Driver]
+	factoriesMu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("coordx: lease driver %q not registered", cfg.Driver)
 	}
