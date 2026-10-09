@@ -21,7 +21,7 @@ export HOST_PORT
 
 # 宿主端口预检：先探再起，避免"起了才发现端口被占"留下半起状态。
 # 本机常见占用来源：SDK 根 compose、hubx-micro-apps 六件套、dockers 通用中间件。
-for p in 8070 8085 3306; do
+for p in "${HOST_PORT}" 8085 3306; do
   if (exec 3<>"/dev/tcp/127.0.0.1/${p}") 2>/dev/null; then
     occ="$("$DOCKER" ps --format '{{.Names}}\t{{.Ports}}' 2>/dev/null | grep -E "[.:]${p}->" | awk -F'\t' '{{print $1}}' | head -1)"
     echo "ERROR: 宿主端口 ${p} 已被占用${occ:+（容器: $occ)}。"
@@ -38,7 +38,7 @@ echo "Waiting for Apollo to be healthy (up to 300s)..."
 for i in $(seq 1 $(( 300 / 2 ))); do
   st="$("$DOCKER" inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' hubx-coordx-apollo 2>/dev/null || echo missing)"
   if [ "$st" = "healthy" ]; then
-    echo "Apollo is ready: 127.0.0.1:8070（Portal），8085→ConfigService"
+    echo "Apollo is ready: 127.0.0.1:${HOST_PORT}（Portal），8085→ConfigService"
     exit 0
   fi
   sleep 2
