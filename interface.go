@@ -3,12 +3,23 @@ package coordx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
 	_ "github.com/gospacex/logx/zap"
 )
+
+// ErrUnsupported 驱动不提供某项能力时返回的哨兵错误。
+//
+// 各驱动应定义自己的具名错误并 wrap 本哨兵（如 nacos 的 ErrLeaseUnsupported、
+// apollo 的 ErrRegisterUnsupported），这样调用方既能精确判定具体驱动能力，
+// 也能用 errors.Is(err, coordx.ErrUnsupported) 做统一降级。
+//
+// 背景：此前这类位置返回裸 error("stub") 甚至 nil（如 nacos 的 Lease.Renew），
+// 调用方无法判定、也无法降级——返回 nil 更会让调用方误以为操作成功。
+var ErrUnsupported = errors.New("coordx: capability not supported by this driver")
 
 // ServiceInstance 服务实例
 type ServiceInstance struct {
