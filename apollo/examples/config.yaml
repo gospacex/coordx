@@ -1,0 +1,14 @@
+# coordx apollo 驱动示例配置
+#
+# Apollo 是配置中心，本驱动不发任何网络请求：addr 只被记录下来用于日志，
+# 三个能力（Register/Discover/Lease）调用时一律返回 coordx.ErrUnsupported。
+#
+# 与 coordx/apollo/docker-compose.yml 对齐：那套环境的 portal 宿主端口是
+# **8070**（本机若有占用可用 HOST_PORT 覆盖）。本机 docker 里另有一个 apollo
+# 映射在 18070/18085，改 addr 即可，对本示例的行为没有影响。
+coordx:
+  cluster:
+    - driver: apollo
+      name: default
+      addr: "http://127.0.0.1:8070"
+      enable_trace: false

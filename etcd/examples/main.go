@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/gospacex/configx"
 	"github.com/gospacex/coordx"
@@ -77,11 +78,20 @@ func main() {
 	logger.InfoContext(ctx, "discovered services", logx.Int("count", len(services)))
 
 	// Lease Grant
-	sessionID, err := lease.Grant(ctx, 30)
+	// ⚠️ 第二个参数是 time.Duration，不是"秒数"。原写法 Grant(ctx, 30) 申请的
+	// 是 30 **纳秒**，etcd 会直接拒绝（invalid TTL）。
+	sessionID, err := lease.Grant(ctx, 30*time.Second)
 	if err != nil {
 		logger.Fatal("lease grant failed", logx.Err(err))
 	}
 	logger.InfoContext(ctx, "lease granted", logx.String("session_id", sessionID))
+
+	// Lease Renew
+	if err := lease.Renew(ctx, sessionID); err != nil {
+		logger.ErrorContext(ctx, "lease renew failed", logx.Err(err))
+	} else {
+		logger.InfoContext(ctx, "lease renewed", logx.String("session_id", sessionID))
+	}
 
 	// Lease Revoke
 	if err := lease.Revoke(ctx, sessionID); err != nil {

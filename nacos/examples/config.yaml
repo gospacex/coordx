@@ -1,0 +1,17 @@
+# coordx nacos 驱动示例配置
+#
+# 与 coordx/nacos/docker-compose.yml 对齐：宿主 8848。
+# addr 支持 "host:port" 或 "http://host:port"（驱动内部 parseServerConfig 解析）。
+#
+# 说明：这里用 standalone 段（不带 namespace），Nacos 落到默认 public 命名空间。
+# 若要指定 namespace，改用 cluster 段并填 cluster: "<namespaceId>" —— 该字段会被
+# 驱动映射到 ClientConfig.NamespaceId，配 standalone 段时不会生效。
+#
+# 调用链：enable_trace 打开后注册/发现操作会产 coord.* span；宿主装配 otelx
+# 后可在 Jaeger 看到，未装配时落在 noop provider 上，不影响功能。
+coordx:
+  standalone:
+    - driver: nacos
+      name: default
+      addr: "127.0.0.1:8848"
+      enable_trace: true

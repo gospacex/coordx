@@ -1,0 +1,16 @@
+# coordx etcd 驱动示例配置
+#
+# 此前本目录只有 main.go 没有 config.yaml，configx 会降级为空配置，
+# ReadAndCreate 恒报 "coordx: no coordx instance configured" —— 示例根本跑不起来。
+#
+# addr 必须带 scheme（http://）：etcd 驱动把 Addr 直接作为 clientv3 的
+# Endpoints，不带 scheme 会在建连时报 missing protocol scheme。
+#
+# 调用链：enable_trace 打开后注册/发现/租约操作会产 coord.* span；宿主装配
+# otelx 后可在 Jaeger 看到，未装配时落在 noop provider 上，不影响功能。
+coordx:
+  standalone:
+    - driver: etcd
+      name: default
+      addr: "http://127.0.0.1:2379"
+      enable_trace: true

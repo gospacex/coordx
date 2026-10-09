@@ -1,0 +1,17 @@
+# coordx k8s_configmap 驱动示例配置
+#
+# addr 是 **kubeconfig 文件路径**（不是服务地址）：驱动用 clientcmd 解析它来
+# 连集群。留空时回落到 ~/.kube/config。
+#
+# cluster 字段承载 **namespace**（驱动里 ns := cfg.Cluster，空则 default）。
+# 注意示例会真的在集群里创建/删除一个名为 coordx-demo-service 的 ConfigMap，
+# 请在测试集群上运行。
+#
+# 没有 K8s 集群时本示例会在建 client 阶段失败退出。
+coordx:
+  cluster:
+    - driver: k8s_configmap
+      name: default
+      # addr: "/Users/you/.kube/config"
+      cluster: "default"
+      enable_trace: false
