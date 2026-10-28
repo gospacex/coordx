@@ -3,7 +3,9 @@ package consul
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
@@ -15,6 +17,15 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
+
+// isNotFound 判定 consul api 返回的「资源不存在」（HTTP 404）。
+//
+// StatusError 是值类型（api.StatusError{Code, Body}），errors.As 直接匹配，
+// 不靠错误字符串——字符串格式随 consul 版本漂移，404 的语义不会。
+func isNotFound(err error) bool {
+	var se api.StatusError
+	return errors.As(err, &se) && se.Code == http.StatusNotFound
+}
 
 // ttlBeatInterval TTL 心跳周期：须小于 Check.TTL（30s），取 1/3 留足三倍余量。
 const ttlBeatInterval = 10 * time.Second
@@ -118,6 +129,17 @@ func (r *registerImpl) startBeat(id string) {
 				return
 			case <-t.C:
 				if err := r.client.Agent().UpdateTTL("service:"+id, "", "passing"); err != nil {
+					// check 已不存在（典型：另一条注销路径——kitex 的
+					// WithRegistry——已经把它摘了，而两个 registerImpl
+					// 实例的心跳是各自独立的）。继续跳只会按周期刷错误
+					// 日志，停跳退出；心跳的契约是「维持活着的 check」，
+					// check 没了即契约终结。
+					if isNotFound(err) {
+						r.logger.InfoContext(context.Background(), "coordx/consul ttl heartbeat stopped: check gone",
+							logx.String("inst_id", id))
+						r.stopBeat(id)
+						return
+					}
 					r.logger.WarnContext(context.Background(), "coordx/consul ttl heartbeat failed",
 						logx.Err(err), logx.String("inst_id", id))
 				}
@@ -144,6 +166,17 @@ func (r *registerImpl) Deregister(ctx context.Context, service string, inst *coo
 		attribute.String("coord.instance_id", inst.ID),
 	)
 	if err := r.client.Agent().ServiceDeregister(inst.ID); err != nil {
+		// 404 = 实例已不在注册中心。双写注册（launchx 的 stepRegister 与
+		// kitex 的 WithRegistry 按同一 ID 各注册一次，见 assembleSRV）下
+		// 第二条注销路径必然命中这里；而 deregister 的契约是「确保该实例
+		// 不存在」——已不在即契约满足，不是故障。不容错会让 Close 返回
+		// error，进程每次优雅停机都退 1，编排系统把正常停机当崩溃。
+		if isNotFound(err) {
+			r.logger.InfoContext(ctx, "coordx/consul deregister skipped: instance already gone",
+				logx.String("service", service), logx.String("inst_id", inst.ID))
+			r.stopBeat(inst.ID)
+			return nil
+		}
 		span.RecordError(err)
 		r.logger.ErrorContext(ctx, "coordx/consul deregister failed", logx.Err(err), logx.String("service", service))
 		return err
